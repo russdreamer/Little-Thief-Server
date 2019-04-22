@@ -2,8 +2,10 @@ package com.toolittlespot.getters;
 
 import com.toolittlespot.pojo.ImageSize;
 import com.toolittlespot.pojo.ImgPart;
+import com.toolittlespot.pojo.ImgPartProps;
 
 import java.awt.image.BufferedImage;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -20,14 +22,20 @@ import static com.toolittlespot.generators.GeneratorUtil.deserializeObj;
 import static com.toolittlespot.generators.GeneratorUtil.executor;
 
 public class PhotoGetter {
+    private DataOutputStream outputStream;
+
+    public PhotoGetter(DataOutputStream outputStream) {
+        this.outputStream = outputStream;
+    }
 
     public BufferedImage getImage(Long photoId){
         try {
             return getPhoto(photoId);
+
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
+            return null;
         }
-        return null;
     }
 
     private BufferedImage getPhoto(Long photoId) throws IOException, InterruptedException {
@@ -60,6 +68,8 @@ public class PhotoGetter {
         if (ySteps * WINDOW_SIZE != sizes.getHeight())
             shiftYList.add(restShiftY);
 
+        outputStream.writeInt(shiftXList.size() * shiftYList.size() + 1);
+
         BufferedImage fullImage = new BufferedImage(sizes.getWidth(), sizes.getHeight(), BufferedImage.TYPE_INT_RGB);
         ArrayList<Coordinates> shifts = (ArrayList<Coordinates>) deserializeObj(COORDS_PATH);
         boolean[][] mask = (boolean[][]) deserializeObj(MASK_PATH);
@@ -67,15 +77,18 @@ public class PhotoGetter {
         List<Callable<ImgPart>> callableList = new ArrayList<>();
         for (int shiftX: shiftXList) {
             for (int shiftY: shiftYList) {
-                Callable callable = new ImgPartGetter(photoId, shiftX, shiftY, mockPixelWidth, mockPixelHeight, mask, shifts);
+                ImgPartProps imgPartProps = new ImgPartProps(photoId, shiftX, shiftY, mockPixelWidth, mockPixelHeight);
+                Callable callable = new ImgPartGetter(imgPartProps, mask, shifts, outputStream);
                 callableList.add(callable);
             }
         }
 
+        outputStream.writeBoolean(true);
         List<Future<ImgPart>> futureList = executor.invokeAll(callableList);
         for (Future<ImgPart> future: futureList) {
             try {
                 ImgPart imgPart = future.get();
+
                 if (imgPart == null)
                     return null;
 
