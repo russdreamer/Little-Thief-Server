@@ -1,4 +1,4 @@
-package com.toolittlespot.getters;
+package com.toolittlespot.pojo;
 
 public class ImageSize {
     private int width;

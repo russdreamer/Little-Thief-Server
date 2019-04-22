@@ -4,9 +4,15 @@ import com.toolittlespot.getters.Coordinates;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.*;
 
+import static com.toolittlespot.Contants.COORDS_PATH;
 import static com.toolittlespot.Contants.MASK_PATH;
+import static com.toolittlespot.Contants.MAX_THREADS_AMOUNT;
+import static com.toolittlespot.generators.GeneratorUtil.deepCloneMask;
+import static com.toolittlespot.generators.GeneratorUtil.serializeObj;
 
 public class AlgorithmGenerator {
     private int shiftY = 0;
@@ -20,12 +26,20 @@ public class AlgorithmGenerator {
     private boolean isDone = false;
     private int curMinFalsePixels = Integer.MAX_VALUE;
     private ArrayList<Coordinates> resultCoordArr;
+    private ExecutorService executor;
 
     public static void main(String[] args) {
-        new AlgorithmGenerator().generate();
+        List<Coordinates> coordList = new AlgorithmGenerator().generate();
+
+        try {
+            serializeObj(coordList, COORDS_PATH);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private List<Coordinates> generate() {
+        executor = Executors.newSingleThreadExecutor();
         resultCoordArr = new ArrayList<>();
         File file = new File(MASK_PATH);
         boolean[][] mask;
@@ -51,9 +65,9 @@ public class AlgorithmGenerator {
                 resetShiftValues();
             }
             else {
-                if (shiftLimit < mask.length / 2){
+                if (shiftLimit < mask.length / 2)
                     increaseShiftValues();
-                }
+
                 else return null;
             }
         }
@@ -80,35 +94,67 @@ public class AlgorithmGenerator {
 
 
     private boolean[][] getAlgorithm(boolean[][] image, boolean[][] mask , int shiftLimit) {
-        boolean[][] tempImg = null;
+        List<Callable<ShiftedImgRes>> callableList;
+        List<ShiftedImgRes> shiftedImgList = new ArrayList<>();
+        ShiftedImgRes bestRes = null;
 
-        while (curMaxShift < shiftLimit && !isDone) {
-            isDone = true;
-            calcCoordinates();
+        while (curMaxShift < shiftLimit) {
+            callableList = createFutures(image, mask);
+            bestRes = invokeAllAndGetBest(callableList, shiftedImgList);
+        }
 
-            boolean[][] maskedImg = getMaskedImage(image, mask);
-            int falsePixels = countFalsePixels(maskedImg);
+        if (bestRes != null) {
+            System.out.println("FALSE PIXELS = " + bestRes.getFalsePixels());
+            if (bestRes.getFalsePixels() < curMinFalsePixels) {
+                if (bestRes.getFalsePixels() == 0) {
+                    isDone = true;
+                    executor.shutdownNow();
+                }
 
-            if (falsePixels > 0)
-                isDone = false;
+                curMinFalsePixels = bestRes.getFalsePixels();
+                bestShiftX = bestRes.getShiftX();
+                bestShiftY = bestRes.getShiftY();
 
-            if (falsePixels < curMinFalsePixels) {
-                tempImg = maskedImg;
-                curMinFalsePixels = falsePixels;
-                bestShiftX = shiftX;
-                bestShiftY = shiftY;
+                return bestRes.getMaskedImg();
             }
         }
 
-        return tempImg;
+        return null;
     }
 
-    private boolean[][] deepCloneMask(boolean[][] mask) {
-        boolean[][] clonedMask = mask.clone();
-        for(int i = 0; i < clonedMask.length; i++) {
-            clonedMask[i] = clonedMask[i].clone();
+    private ShiftedImgRes invokeAllAndGetBest(List<Callable<ShiftedImgRes>> callableList, List<ShiftedImgRes> shiftedImgList) {
+        try {
+            List<Future<ShiftedImgRes>> futureList = executor.invokeAll(callableList);
+            for (Future<ShiftedImgRes> fut : futureList) {
+                ShiftedImgRes result = fut.get();
+                shiftedImgList.add(result);
+            }
+
+            ShiftedImgRes bestRes = shiftedImgList
+                    .parallelStream()
+                    .min(Comparator.comparing(ShiftedImgRes::getFalsePixels))
+                    .get();
+
+            shiftedImgList.clear();
+            callableList.clear();
+            shiftedImgList.add(bestRes);
+
+            return bestRes;
+
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+            return null;
         }
-        return clonedMask;
+    }
+
+    private List<Callable<ShiftedImgRes>> createFutures(boolean[][] image, boolean[][] mask) {
+        List<Callable<ShiftedImgRes>> list = new ArrayList<>();
+        for (int i = 0; i < MAX_THREADS_AMOUNT && curMaxShift < shiftLimit; i++) {
+            calcCoordinates();
+            Callable<ShiftedImgRes> callable = new ProcShiftedImg(image, mask, shiftX, shiftY);
+            list.add(callable);
+        }
+        return list;
     }
 
     private void calcCoordinates(){
@@ -136,32 +182,5 @@ public class AlgorithmGenerator {
         }
     }
 
-    private boolean[][] getMaskedImage(boolean[][] image, boolean[][] mask) {
-        boolean[][] newImage = deepCloneMask(image);
-        int imgSize = newImage.length;
 
-        for(int i = 0; i < imgSize; i++){
-            for (int j = 0; j < imgSize; j++){
-                if (!newImage[i][j]){
-                    if (i + shiftX >= 0 && i + shiftX < imgSize && j +shiftY >= 0 && j +shiftY < imgSize){
-                        if (mask[i + shiftX][j + shiftY]){
-                            newImage[i][j] = true;
-                        }
-                    }
-                }
-            }
-        }
-        return newImage;
-    }
-
-    private static int countFalsePixels(boolean[][] img) {
-        int sum = 0;
-        for(int i = 0; i < 700; i++) {
-            for (int j = 0; j < 700; j++) {
-                if (!img[i][j])
-                    sum++;
-            }
-        }
-        return sum;
-    }
 }
