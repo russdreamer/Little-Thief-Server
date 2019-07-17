@@ -1,4 +1,4 @@
-# Photo-thief-Server
+# «Little Thief» Server
 <p align="center"><img src="https://raw.githubusercontent.com/russdreamer/Photo-thief-Android/master/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png"></p>
 
 Server side of software demonstrating some service's vulnerabilities in getting a product without payment. Working with android client via socket connection.</br>
